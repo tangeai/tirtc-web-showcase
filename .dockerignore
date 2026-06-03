@@ -1,0 +1,12 @@
+node_modules
+dist
+.git
+.vscode
+.tmp
+.tmp_tirtc_release
+build-final.log
+build-last.log
+build-output.log
+*.png
+*.zip
+.env

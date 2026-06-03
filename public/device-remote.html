@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Android 真机远程调试</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: #edf4f8;
+        color: #0f2238;
+      }
+      .shell {
+        width: min(1200px, calc(100vw - 32px));
+        margin: 0 auto;
+        padding: 24px 0 40px;
+        display: grid;
+        gap: 16px;
+      }
+      .panel {
+        background: #fff;
+        border: 1px solid #d5e1eb;
+        border-radius: 20px;
+        padding: 16px;
+        box-shadow: 0 12px 30px rgba(15,34,56,0.08);
+      }
+      .toolbar {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        align-items: center;
+      }
+      .toolbar button, .toolbar input {
+        font: inherit;
+      }
+      .toolbar button {
+        min-height: 40px;
+        border: 0;
+        border-radius: 12px;
+        padding: 0 14px;
+        background: #1768b7;
+        color: #fff;
+        cursor: pointer;
+      }
+      .toolbar button.secondary {
+        background: #eef6fb;
+        color: #0f2238;
+      }
+      .toolbar input {
+        min-height: 40px;
+        border: 1px solid #d5e1eb;
+        border-radius: 12px;
+        padding: 0 12px;
+        min-width: 220px;
+        background: #f8fbfe;
+      }
+      .status {
+        display: flex;
+        gap: 14px;
+        flex-wrap: wrap;
+        margin-top: 12px;
+        color: #627184;
+        font-size: 14px;
+        font-weight: 600;
+      }
+      .viewer {
+        display: grid;
+        grid-template-columns: minmax(320px, 420px) minmax(280px, 1fr);
+        gap: 16px;
+        align-items: start;
+      }
+      .screen-wrap {
+        position: sticky;
+        top: 16px;
+      }
+      .screen-frame {
+        width: 100%;
+        aspect-ratio: 9 / 19.8;
+        border-radius: 28px;
+        background: linear-gradient(180deg, #101a28, #1c2a3e);
+        padding: 10px;
+        box-shadow: inset 0 0 0 1px rgba(255,255,255,0.06);
+      }
+      .screen {
+        width: 100%;
+        height: 100%;
+        border-radius: 22px;
+        background: #111;
+        overflow: hidden;
+        position: relative;
+      }
+      .screen img {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+        display: block;
+        cursor: crosshair;
+        background: #000;
+      }
+      .meta {
+        display: grid;
+        gap: 12px;
+      }
+      .card {
+        border: 1px solid #d5e1eb;
+        border-radius: 16px;
+        padding: 14px;
+        background: #fff;
+      }
+      .card h2 {
+        margin: 0 0 10px;
+        font-size: 16px;
+      }
+      .log {
+        max-height: 360px;
+        overflow: auto;
+        display: grid;
+        gap: 8px;
+      }
+      .log-item {
+        border-radius: 12px;
+        background: #f8fbfe;
+        padding: 10px 12px;
+        font-size: 13px;
+        color: #334a59;
+      }
+      .tips {
+        margin: 0;
+        padding-left: 18px;
+        color: #627184;
+        font-size: 14px;
+        line-height: 1.6;
+      }
+      @media (max-width: 900px) {
+        .viewer { grid-template-columns: 1fr; }
+        .screen-wrap { position: static; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <div class="panel">
+        <div class="toolbar">
+          <button id="openPageBtn">在真机打开当前页</button>
+          <button id="refreshBtn" class="secondary">刷新真机画面</button>
+          <button id="backBtn" class="secondary">返回</button>
+          <button id="homeBtn" class="secondary">主页</button>
+          <input id="pathInput" value="/" />
+        </div>
+        <div class="status" id="statusRow">
+          <span>设备：检测中...</span>
+        </div>
+      </div>
+
+      <div class="viewer">
+        <div class="screen-wrap">
+          <div class="screen-frame panel">
+            <div class="screen">
+              <img id="screenImage" alt="Android 真机画面" />
+            </div>
+          </div>
+        </div>
+
+        <div class="meta">
+          <div class="card">
+            <h2>操作说明</h2>
+            <ul class="tips">
+              <li>点击左侧手机画面会把坐标映射成真机点击。</li>
+              <li>先点“在真机打开当前页”，再点页面上的按钮调试。</li>
+              <li>如果画面过期，可点“刷新真机画面”。</li>
+            </ul>
+          </div>
+          <div class="card">
+            <h2>操作日志</h2>
+            <div id="log" class="log"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const screenImage = document.getElementById('screenImage')
+      const statusRow = document.getElementById('statusRow')
+      const log = document.getElementById('log')
+      const pathInput = document.getElementById('pathInput')
+      let deviceStatus = { connected: false, screenWidth: 0, screenHeight: 0 }
+
+      function addLog(message) {
+        const item = document.createElement('div')
+        item.className = 'log-item'
+        item.textContent = `[${new Date().toLocaleTimeString('zh-CN', { hour12: false })}] ${message}`
+        log.prepend(item)
+      }
+
+      async function api(url, options = {}) {
+        const response = await fetch(url, options)
+        const contentType = response.headers.get('content-type') || ''
+        if (!response.ok) {
+          const payload = contentType.includes('application/json') ? await response.json() : await response.text()
+          throw new Error(payload.message || payload || '请求失败')
+        }
+        if (contentType.includes('application/json')) return response.json()
+        return response.blob()
+      }
+
+      async function refreshStatus() {
+        try {
+          deviceStatus = await api('/api/device/status')
+          if (!deviceStatus.connected) {
+            statusRow.innerHTML = '<span>设备：未连接或未授权</span>'
+            addLog('当前没有可用的 Android 真机')
+            return
+          }
+          statusRow.innerHTML = `
+            <span>设备：${deviceStatus.model || deviceStatus.serial}</span>
+            <span>分辨率：${deviceStatus.screenWidth} × ${deviceStatus.screenHeight}</span>
+          `
+        } catch (error) {
+          statusRow.innerHTML = `<span>状态获取失败：${error.message}</span>`
+          addLog(`状态获取失败：${error.message}`)
+        }
+      }
+
+      async function refreshScreenshot() {
+        try {
+          const blob = await api('/api/device/screenshot')
+          const url = URL.createObjectURL(blob)
+          screenImage.onload = () => URL.revokeObjectURL(url)
+          screenImage.src = url + `#${Date.now()}`
+          addLog('已刷新真机画面')
+        } catch (error) {
+          addLog(`刷新截图失败：${error.message}`)
+        }
+      }
+
+      async function openPage() {
+        try {
+          await api('/api/device/open-page', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: pathInput.value || '/' }),
+          })
+          addLog(`已在真机打开 ${pathInput.value || '/'}`)
+          setTimeout(refreshScreenshot, 1200)
+        } catch (error) {
+          addLog(`打开页面失败：${error.message}`)
+        }
+      }
+
+      async function sendKeyEvent(keyevent) {
+        try {
+          await api('/api/device/keyevent', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ keyevent }),
+          })
+          addLog(`已发送 ${keyevent}`)
+          setTimeout(refreshScreenshot, 800)
+        } catch (error) {
+          addLog(`发送按键失败：${error.message}`)
+        }
+      }
+
+      async function tapOnDevice(event) {
+        if (!deviceStatus.connected || !deviceStatus.screenWidth || !deviceStatus.screenHeight) {
+          addLog('当前没有可点击的真机画面')
+          return
+        }
+
+        const rect = screenImage.getBoundingClientRect()
+        const x = Math.round(((event.clientX - rect.left) / rect.width) * deviceStatus.screenWidth)
+        const y = Math.round(((event.clientY - rect.top) / rect.height) * deviceStatus.screenHeight)
+
+        try {
+          await api('/api/device/tap', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ x, y }),
+          })
+          addLog(`已点击真机坐标 (${x}, ${y})`)
+          setTimeout(refreshScreenshot, 900)
+        } catch (error) {
+          addLog(`点击失败：${error.message}`)
+        }
+      }
+
+      document.getElementById('openPageBtn').addEventListener('click', openPage)
+      document.getElementById('refreshBtn').addEventListener('click', refreshScreenshot)
+      document.getElementById('backBtn').addEventListener('click', () => sendKeyEvent('KEYCODE_BACK'))
+      document.getElementById('homeBtn').addEventListener('click', () => sendKeyEvent('KEYCODE_HOME'))
+      screenImage.addEventListener('click', tapOnDevice)
+
+      refreshStatus().then(refreshScreenshot)
+      setInterval(refreshStatus, 5000)
+    </script>
+  </body>
+</html>

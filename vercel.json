@@ -1,0 +1,16 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "rewrites": [
+    {
+      "source": "/api/token/issue",
+      "destination": "/api/token-issue"
+    }
+  ],
+  "redirects": [
+    {
+      "source": "/device-remote.html",
+      "destination": "/",
+      "permanent": false
+    }
+  ]
+}
